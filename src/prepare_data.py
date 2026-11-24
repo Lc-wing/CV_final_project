@@ -124,6 +124,8 @@ def scan_split(split_dir: Path, split_name: str) -> SplitAudit:
     xml_dir = split_path / "xml"
     if not img_dir.is_dir():
         raise FileNotFoundError(f"Image directory not found: {img_dir}")
+    if not xml_dir.is_dir():
+        raise FileNotFoundError(f"XML directory not found: {xml_dir}")
 
     img_paths = sorted(
         p
@@ -479,9 +481,11 @@ def main(argv: list[str] | None = None) -> int:
     val_s = eda["splits"]["val"]
     print(
         f"Train+Val EDA complete | "
-        f"train: {train_s['num_images']} imgs ({train_s['num_empty_images']} empty), "
+        f"train: {train_s['num_images']} imgs ({train_s['num_empty_images']} empty, "
+        f"missing_xml={train_s['num_missing_xml']}), "
         f"{train_s['num_boxes']} boxes ({train_s['num_dropped_boxes']} dropped) | "
-        f"val: {val_s['num_images']} imgs ({val_s['num_empty_images']} empty), "
+        f"val: {val_s['num_images']} imgs ({val_s['num_empty_images']} empty, "
+        f"missing_xml={val_s['num_missing_xml']}), "
         f"{val_s['num_boxes']} boxes ({val_s['num_dropped_boxes']} dropped) | "
         f"scale edges: tiny<{edges['tiny_max']}, small<{edges['small_max']}"
     )

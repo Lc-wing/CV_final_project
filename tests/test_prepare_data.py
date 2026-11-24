@@ -285,3 +285,35 @@ def test_cli_skip_download_writes_eda_and_scale_bins_without_touching_test(tmp_p
     )
     assert exit_code_2 == 0
     assert json.loads(custom_bins.read_text(encoding="utf-8")) == bins
+
+
+def test_scan_split_requires_xml_dir_and_cli_surfaces_missing_xml(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Missing xml/ directory must fail loudly rather than silently producing 0 boxes
+    broken_split = tmp_path / "broken_train"
+    (broken_split / "img").mkdir(parents=True)
+    Image.new("RGB", (100, 100)).save(broken_split / "img" / "00001.jpg")
+    with pytest.raises(FileNotFoundError, match="xml"):
+        scan_split(broken_split, "train")
+
+    # Individual missing XML file should be surfaced in CLI stdout summary
+    data_dir = tmp_path / "data"
+    _create_split(data_dir, "train", [0.0005, 0.002, 0.02])
+    _create_split(data_dir, "val", [0.0004, 0.003, 0.03])
+    Image.new("RGB", (1000, 1000)).save(data_dir / "train" / "img" / "88888.jpg")
+
+    eda_out = tmp_path / "results" / "eda_train_val.json"
+    exit_code = main(
+        [
+            "--data-dir",
+            str(data_dir),
+            "--eda-out",
+            str(eda_out),
+            "--skip-download",
+        ]
+    )
+    assert exit_code == 0
+    captured = capsys.readouterr().out
+    assert "missing_xml=1" in captured
+    assert "missing_xml=0" in captured
