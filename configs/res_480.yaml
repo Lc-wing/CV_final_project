@@ -1,0 +1,17 @@
+run_name: res_480
+seed: 42
+min_size: 480
+max_size: 800
+anchor_sizes: [32, 64, 128, 256, 512]
+aspect_ratios: [0.5, 1.0, 2.0]
+trainable_backbone_layers: 3
+epochs: 12
+batch_size: 8
+lr: 0.0002
+weight_decay: 0.0001
+warmup_steps: 200
+grad_clip_norm: 10.0
+hflip_prob: 0.5
+score_thresh: 0.5
+iou_thresh: 0.5
+num_workers: 2

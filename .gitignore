@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+.pytest_cache/
+data/
+checkpoints/
+*.pt
+*.pth
+*.zip
+.DS_Store
+submission_build/
+.superpowers/
