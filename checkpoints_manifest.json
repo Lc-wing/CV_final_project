@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "project": "CS460 Anti-UAV Detection (Faster R-CNN MobileNetV3-Large-FPN)",
+  "hosting_instructions": "After Phase 3 GPU training completes, upload *_best.pt checkpoints to Google Drive MyDrive/CV_project/checkpoints/ or GitHub Releases, compute SHA-256 hashes (sha256sum checkpoints/*_best.pt), and replace the TBD_AFTER_PHASE_3_TRAINING placeholders below.",
+  "checkpoints": [
+    {
+      "run_name": "res_800",
+      "filename": "res_800_best.pt",
+      "url": "TBD_AFTER_PHASE_3_TRAINING",
+      "sha256": "TBD_AFTER_PHASE_3_TRAINING",
+      "hosting_note": "Google Drive MyDrive/CV_project/checkpoints/ or GitHub Releases"
+    },
+    {
+      "run_name": "res_480",
+      "filename": "res_480_best.pt",
+      "url": "TBD_AFTER_PHASE_3_TRAINING",
+      "sha256": "TBD_AFTER_PHASE_3_TRAINING",
+      "hosting_note": "Google Drive MyDrive/CV_project/checkpoints/ or GitHub Releases"
+    },
+    {
+      "run_name": "res_480_small_anchor",
+      "filename": "res_480_small_anchor_best.pt",
+      "url": "TBD_AFTER_PHASE_3_TRAINING",
+      "sha256": "TBD_AFTER_PHASE_3_TRAINING",
+      "hosting_note": "Google Drive MyDrive/CV_project/checkpoints/ or GitHub Releases"
+    }
+  ]
+}
