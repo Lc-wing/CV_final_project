@@ -316,15 +316,76 @@ def test_download_checkpoints_manifest_placeholder_and_local_file(tmp_path: Path
 
 
 def test_notebook_and_documentation_artifacts_are_valid() -> None:
+    import ast
+
     nb_path = REPO_ROOT / "notebooks" / "run_experiments.ipynb"
     assert nb_path.is_file()
     nb = json.loads(nb_path.read_text(encoding="utf-8"))
     assert nb["nbformat"] == 4
     assert isinstance(nb["cells"], list) and len(nb["cells"]) >= 6
+
+    code_cells = [cell for cell in nb["cells"] if cell.get("cell_type") == "code"]
+    assert len(code_cells) >= 9
+    for idx, cell in enumerate(code_cells, start=1):
+        src = "".join(cell.get("source", []))
+        ast.parse(src, filename=f"run_experiments.ipynb:code_cell_{idx}")
+
     full_source = "\n".join(
         "".join(cell.get("source", [])) for cell in nb["cells"]
     )
-    assert "/content/drive/MyDrive/CV_project" in full_source
+    code_by_id = {
+        cell["id"]: "".join(cell.get("source", []))
+        for cell in code_cells
+        if "id" in cell
+    }
+
+    # Cell 1: streaming run_cmd helper + Colab local SSD DATA_DIR + persistent STORAGE_ROOT
+    cell1 = code_by_id["cell-env-code"]
+    assert "def run_cmd(" in cell1
+    assert "subprocess.Popen(" in cell1
+    assert "PYTHONUNBUFFERED" in cell1
+    assert "CalledProcessError" in cell1
+    assert 'DATA_DIR = Path("/content/data/dut_anti_uav")' in cell1
+    assert 'DATA_DIR = Path("/kaggle/working/data/dut_anti_uav")' in cell1
+    assert 'DATA_DIR = Path("data/dut_anti_uav")' in cell1
+    assert "/content/drive/MyDrive/CV_project" in cell1
+    assert 'PREDICTIONS_DIR = STORAGE_ROOT / "submission_pack" / "predictions"' in cell1
+
+    # No legacy blocking subprocess.run calls anywhere in code cells
+    all_code = "\n".join("".join(c.get("source", [])) for c in code_cells)
+    assert "subprocess.run(" not in all_code
+
+    # Cell 2: Local git guard + sys.path setup + run_cmd
+    cell2 = code_by_id["cell-clone-code"]
+    assert 'if PLATFORM != "Local":' in cell2
+    assert "sys.path.insert(0, str(REPO_DIR))" in cell2
+    assert "run_cmd(" in cell2
+
+    # Cell 3: idempotent src.prepare_data without weak img/-only --skip-download
+    cell3 = code_by_id["cell-data-code"]
+    assert "--skip-download" not in cell3
+    assert "run_cmd(" in cell3
+
+    # Cell 4: isolated smoke_runs directory outside RESULTS_DIR
+    cell4 = code_by_id["cell-smoke-code"]
+    assert 'STORAGE_ROOT / "smoke_runs" / "logs"' in cell4
+    assert 'STORAGE_ROOT / "smoke_runs" / "checkpoints"' in cell4
+    assert "RESULTS_DIR" not in cell4
+    assert "run_cmd(" in cell4
+
+    # Cells 5-7: streaming run_cmd
+    for cid in ("cell-train-code", "cell-eval-code", "cell-plot-code"):
+        assert "run_cmd(" in code_by_id[cid]
+
+    # Cell 8: persisted PREDICTIONS_DIR, STORAGE_ROOT test_pack fallback, strict image filter
+    cell8 = code_by_id["cell-predict-code"]
+    assert 'STORAGE_ROOT / "submission_pack" / "test_pack"' in cell8
+    assert 'REPO_DIR / "submission_pack" / "test_pack"' in cell8
+    assert 'PREDICTIONS_DIR / "test_pack_predictions.csv"' in cell8
+    assert 'PREDICTIONS_DIR / "visuals"' in cell8
+    assert "p.is_file()" in cell8 and "p.suffix.lower()" in cell8
+    assert "run_cmd(" in cell8
+
     assert "/kaggle/working" in full_source
     for cmd in (
         "src.prepare_data",
@@ -343,6 +404,8 @@ def test_notebook_and_documentation_artifacts_are_valid() -> None:
     assert "GeneralizedRCNNTransform" in guide_text
     assert "src.plot_curves" in guide_text
     assert "src.predict_single" in guide_text
+    assert "src/eval.py:420-547" in guide_text
+    assert "src/train.py:580" in guide_text
 
     readme_path = REPO_ROOT / "README.md"
     assert readme_path.is_file()
@@ -352,6 +415,8 @@ def test_notebook_and_documentation_artifacts_are_valid() -> None:
     assert "scripts.download_checkpoints" in readme_text
     assert "src.build_submission" in readme_text
     assert "report.build_report_docx" in readme_text
+    assert "/content/data/dut_anti_uav" in readme_text
+    assert "~210 MB" in readme_text
 
 
 def test_build_submission_checks_step_logs_eval_jsons_and_cli(tmp_path: Path) -> None:
@@ -662,4 +727,89 @@ def test_build_report_docx_preserves_typography_table_borders_and_all_featured_s
             assert f"sample_id={sid} | run={run_name}" in summary_text
 
 
+def test_build_submission_excludes_docs_superpowers_and_enforces_cartesian_predictions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os as real_os
+    import src.build_submission as bs_mod
+    from src.prepare_data import IMAGE_EXTENSIONS as PREP_IMAGE_EXTENSIONS
 
+    assert bs_mod.IMAGE_EXTENSIONS is PREP_IMAGE_EXTENSIONS
+
+    report_pdf = _create_minimal_compliant_repo(tmp_path)
+
+    # Add a second configured run and second test-pack sample (2 samples x 2 runs = 4 pairs)
+    (tmp_path / "configs" / "res_480.yaml").write_text("run_name: res_480\n", encoding="utf-8")
+    (tmp_path / "results" / "logs" / "res_480_epoch_log.csv").write_text(
+        "run_name,epoch,train_total_loss\nres_480,1,0.6\n",
+        encoding="utf-8",
+    )
+    Image.new("RGB", (64, 64)).save(tmp_path / "submission_pack" / "test_pack" / "img" / "00002.jpg")
+    (tmp_path / "submission_pack" / "test_pack" / "xml" / "00002.xml").write_text(
+        "<annotation/>",
+        encoding="utf-8",
+    )
+
+    pred_csv = tmp_path / "submission_pack" / "predictions" / "test_pack_predictions.csv"
+    out_zip = tmp_path / "cartesian.zip"
+
+    # 1) Partial Cartesian coverage (3 of 4 pairs: missing ('00002', 'res_480')) must fail hard
+    pred_csv.write_text(
+        "sample_id,run_name\n"
+        "00001,res_800\n"
+        "00001,res_480\n"
+        "00002,res_800\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="missing required.*00002.*res_480"):
+        build_submission_zip(tmp_path, out_zip, report_pdf)
+
+    # 2) Duplicate (sample_id, run_name) row must fail hard
+    pred_csv.write_text(
+        "sample_id,run_name\n"
+        "00001,res_800\n"
+        "00001,res_800\n"
+        "00001,res_480\n"
+        "00002,res_800\n"
+        "00002,res_480\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Duplicate"):
+        build_submission_zip(tmp_path, out_zip, report_pdf)
+
+    # 3) Exact full Cartesian coverage succeeds, bundles docs/spot_check_guide.md, and prunes docs/superpowers/
+    pred_csv.write_text(
+        "sample_id,run_name\n"
+        "00001,res_800\n"
+        "00001,res_480\n"
+        "00002,res_800\n"
+        "00002,res_480\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "docs" / "superpowers" / "plans").mkdir(parents=True)
+    (tmp_path / "docs" / "spot_check_guide.md").write_text("# Guide\n", encoding="utf-8")
+    (tmp_path / "docs" / "superpowers" / "plans" / "internal_plan.md").write_text(
+        "# Internal\n",
+        encoding="utf-8",
+    )
+
+    visited_dirs: list[str] = []
+    orig_walk = real_os.walk
+
+    def tracking_walk(top: Path | str):
+        for dirpath, dirnames, filenames in orig_walk(top):
+            visited_dirs.append(Path(dirpath).relative_to(tmp_path).as_posix())
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(bs_mod.os, "walk", tracking_walk)
+    info = build_submission_zip(tmp_path, out_zip, report_pdf)
+    assert out_zip.is_file() and info["runs"] == ["res_480", "res_800"]
+
+    with zipfile.ZipFile(out_zip, "r") as zf:
+        names = set(zf.namelist())
+    assert "docs/spot_check_guide.md" in names
+    assert not any(name == "docs/superpowers" or name.startswith("docs/superpowers/") for name in names)
+    assert not any(
+        d == "docs/superpowers" or d.startswith("docs/superpowers/") for d in visited_dirs
+    )

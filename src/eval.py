@@ -731,14 +731,19 @@ def load_checkpoint(
     device: torch.device | str = "cpu",
     expected_run_name: str | None = None,
 ) -> tuple[dict[str, torch.Tensor], dict[str, Any]]:
-    """Load a training checkpoint dict or plain ``state_dict`` and validate ``run_name``."""
+    """Load a training checkpoint dict or plain ``state_dict`` onto CPU and validate ``run_name``.
+
+    Always deserializes with ``map_location="cpu"`` so discarded optimizer state
+    never occupies GPU VRAM; callers move the model with ``model.to(device)``
+    (or ``load_state_dict`` copies CPU tensors to the model's device automatically).
+    """
+    _ = torch.device(device)
     ckpt_path = Path(checkpoint_path)
-    dev = torch.device(device)
 
     try:
-        loaded = torch.load(ckpt_path, map_location=dev, weights_only=True)
-    except pickle.UnpicklingError:
-        loaded = torch.load(ckpt_path, map_location=dev, weights_only=False)
+        loaded = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+    except (pickle.UnpicklingError, RuntimeError):
+        loaded = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
     if not isinstance(loaded, dict):
         raise ValueError(

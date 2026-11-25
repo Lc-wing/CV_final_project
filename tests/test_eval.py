@@ -489,3 +489,32 @@ def test_interleaved_threshold_indices_and_empty_image_scale_fp() -> None:
     assert by_scale["small"]["ap50"] == 0.0
     assert by_scale["medium_large"]["ap50"] == 0.0
 
+
+def test_load_checkpoint_runtime_error_fallback_and_cpu_map_location(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ckpt_path = tmp_path / "res_800_best.pt"
+    expected_sd = {"weight": torch.tensor([1.0, 2.0])}
+    torch.save({"model_state_dict": expected_sd, "run_name": "res_800", "epoch": 3}, ckpt_path)
+
+    real_load = torch.load
+    recorded_calls: list[tuple[Any, Any]] = []
+
+    def _runtime_error_on_weights_only(*args: Any, **kwargs: Any) -> Any:
+        recorded_calls.append((kwargs.get("map_location"), kwargs.get("weights_only")))
+        if kwargs.get("weights_only") is True:
+            raise RuntimeError("Simulated PyTorch 2.2 weights_only RuntimeError")
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr("src.eval.torch.load", _runtime_error_on_weights_only)
+
+    state_dict, meta = load_checkpoint(
+        ckpt_path,
+        device="cuda",
+        expected_run_name="res_800",
+    )
+    assert recorded_calls == [("cpu", True), ("cpu", False)]
+    assert torch.equal(state_dict["weight"], expected_sd["weight"])
+    assert state_dict["weight"].device.type == "cpu"
+    assert meta["epoch"] == 3

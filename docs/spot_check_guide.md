@@ -11,7 +11,7 @@ All three controlled runs (`res_800`, `res_480`, `res_480_small_anchor`) execute
 | Step | Exact Lines | Code / Mechanism | Purpose |
 | --- | --- | --- | --- |
 | **1. Zero gradients** | `src/train.py:322` | `optimizer.zero_grad(set_to_none=True)` | Clears previous step gradients cleanly before the forward pass. |
-| **2. AMP forward & 4 Faster R-CNN losses** | `src/train.py:325-332` | `with torch.amp.autocast(device_type=device.type, enabled=use_amp):` and `loss_dict = model(device_images, device_targets)` | Computes all 4 Faster R-CNN loss terms (`loss_classifier`, `loss_box_reg`, `loss_objectness`, `loss_rpn_box_reg`) and sums them into scalar `loss = sum(loss_dict.values())`. |
+| **2. AMP forward & 4 Faster R-CNN losses** | `src/train.py:325-332` | `with torch.amp.autocast(device_type="cuda" if use_amp else "cpu", enabled=use_amp):` and `loss_dict = model(device_images, device_targets)` | Computes all 4 Faster R-CNN loss terms (`loss_classifier`, `loss_box_reg`, `loss_objectness`, `loss_rpn_box_reg`) and sums them into scalar `loss = sum(loss_dict.values())`. |
 | **3. Finite-loss guard** | `src/train.py:336-346` | `if not torch.isfinite(loss).all() or any(not torch.isfinite(v).all() for v in loss_dict.values()): raise RuntimeError(...)` | Aborts *before* `backward()` and `optimizer.step()` if any loss component produces `NaN`/`Inf`, preventing silent weight or checkpoint corruption. |
 | **4. Scaled backward** | `src/train.py:351` | `scaler.scale(loss).backward()` | Backpropagates gradients through trainable backbone layers (`trainable_backbone_layers=3`), FPN, RPN, and RoI box heads (no-op scaling on CPU). |
 | **5. Unscale & gradient clipping** | `src/train.py:352-353` | `scaler.unscale_(optimizer)` followed by `torch.nn.utils.clip_grad_norm_(trainable_params, cfg.grad_clip_norm)` | Unscales AMP gradients before clipping global gradient L2 norm to `10.0`. |
@@ -21,7 +21,7 @@ All three controlled runs (`res_800`, `res_480`, `res_480_small_anchor`) execute
 
 **Checkpoint Selection & Exact Resume:**
 - After each epoch, `src/train.py` evaluates on `val` in `model.eval()` + `torch.no_grad()`, logs a flushed row to `results/logs/<run>_epoch_log.csv`, saves `<run>_last.pt`, and overwrites `<run>_best.pt` strictly when `val_ap50` improves.
-- Deterministic per-epoch shuffling (`train_generator.manual_seed(cfg.seed + epoch)` at `src/train.py:573`) guarantees that an interrupted run resumed with `--resume` sees the exact same batch ordering and appends cleanly without duplicate rows.
+- Deterministic per-epoch shuffling (`train_generator.manual_seed(cfg.seed + epoch)` at `src/train.py:580`) guarantees that an interrupted run resumed with `--resume` sees the exact same batch ordering and appends cleanly without duplicate rows.
 
 ---
 
@@ -36,7 +36,7 @@ A common detection bug is accidentally resizing images manually without transfor
    - When `build_model(cfg)` constructs `fasterrcnn_mobilenet_v3_large_fpn(..., min_size=cfg.min_size, max_size=cfg.max_size)` (`src/model.py:72-78`), TorchVision attaches `model.transform` (`GeneralizedRCNNTransform`).
    - During **training**, `GeneralizedRCNNTransform` isotropically scales each image so its shorter edge hits `min_size` (`800` for `res_800`, `480` for `res_480` and `res_480_small_anchor`) capped by `max_size` (`1333` vs. `800`), and applies the **exact same scale factor** to target bounding boxes.
    - During **evaluation/inference** (`model.eval()`), `model.transform.postprocess()` automatically projects predicted boxes back into the **original** `(orig_w, orig_h)` pixel coordinate system before returning predictions.
-3. **Fair cross-resolution scale evaluation (`src/eval.py:420-520`)**:
+3. **Fair cross-resolution scale evaluation (`src/eval.py:420-547`)**:
    - Because `res_800`, `res_480`, and `res_480_small_anchor` all output boxes in original pixel coordinates, `evaluate_by_scale_bins()` assigns every ground-truth UAV to `tiny`, `small`, or `medium_large` using `(w * h) / (orig_w * orig_h)` in **original image coordinates** with bin edges computed strictly from `train + val` EDA (`scale_bins.json`). Thus a Tiny UAV stays Tiny across all three models.
 
 ---

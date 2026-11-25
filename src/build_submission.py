@@ -12,9 +12,9 @@ from typing import Any
 
 import yaml
 
-DEFAULT_MAX_SUBMISSION_BYTES = 50 * 1024 * 1024
+from src.prepare_data import IMAGE_EXTENSIONS
 
-IMAGE_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp"})
+DEFAULT_MAX_SUBMISSION_BYTES = 50 * 1024 * 1024
 
 NON_EVAL_METRICS_FILENAMES: frozenset[str] = frozenset(
     {
@@ -36,6 +36,8 @@ EXCLUDED_DIRS: frozenset[str] = frozenset(
         "node_modules",
     }
 )
+
+EXCLUDED_REL_DIRS: frozenset[str] = frozenset({"docs/superpowers"})
 
 WEIGHT_EXTENSIONS: frozenset[str] = frozenset(
     {
@@ -204,6 +206,10 @@ def _validate_test_pack_and_predictions(
 
     test_pack_sample_ids: set[str] = set()
     for img_path in img_files:
+        if img_path.stem in test_pack_sample_ids:
+            raise ValueError(
+                f"Duplicate test-pack sample_id {img_path.stem!r} in '{img_dir}'"
+            )
         test_pack_sample_ids.add(img_path.stem)
         expected_xml = xml_dir / f"{img_path.stem}.xml"
         if not expected_xml.is_file():
@@ -221,7 +227,7 @@ def _validate_test_pack_and_predictions(
                     f"Predictions CSV '{pred_csv.name}' missing required column '{required_col}'"
                 )
         row_count = 0
-        seen_pred_runs: set[str] = set()
+        seen_pairs: set[tuple[str, str]] = set()
         for row_idx, row in enumerate(reader, start=2):
             row_count += 1
             sample_id = (row.get("sample_id") or "").strip()
@@ -240,15 +246,26 @@ def _validate_test_pack_and_predictions(
                     f"Drift in run_name at row {row_idx} of '{pred_csv.name}': "
                     f"{row_run!r} is not in configured runs {sorted(configured_runs)}"
                 )
-            seen_pred_runs.add(row_run)
+            pair = (sample_id, row_run)
+            if pair in seen_pairs:
+                raise ValueError(
+                    f"Duplicate (sample_id, run_name) pair {pair!r} at row {row_idx} "
+                    f"of '{pred_csv.name}'"
+                )
+            seen_pairs.add(pair)
         if row_count == 0:
             raise ValueError(f"Predictions CSV '{pred_csv.name}' contains no data rows")
 
-        missing_pred_runs = sorted(configured_runs - seen_pred_runs)
-        if missing_pred_runs:
+        expected_pairs = {
+            (sid, run)
+            for sid in test_pack_sample_ids
+            for run in configured_runs
+        }
+        missing_pairs = sorted(expected_pairs - seen_pairs)
+        if missing_pairs:
             raise ValueError(
-                f"Predictions CSV '{pred_csv.name}' missing rows for configured "
-                f"run_name(s): {missing_pred_runs}"
+                f"Predictions CSV '{pred_csv.name}' missing required (sample_id, run_name) "
+                f"pair(s): {missing_pairs}"
             )
 
 
@@ -286,11 +303,15 @@ def _collect_bundle_files(
     excluded_weights: list[str] = []
 
     for dirpath, dirnames, filenames in os.walk(root):
-        # Prune excluded directories in-place so large data/, .venv/, .git/, checkpoints/
-        # trees are never traversed.
-        dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDED_DIRS)
-
         current_dir = Path(dirpath)
+        # Prune excluded directories in-place so large data/, .venv/, .git/, checkpoints/,
+        # and internal docs/superpowers/ trees are never traversed.
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if d not in EXCLUDED_DIRS
+            and (current_dir / d).relative_to(root).as_posix() not in EXCLUDED_REL_DIRS
+        )
         for fname in sorted(filenames):
             if fname in EXCLUDED_FILENAMES:
                 continue

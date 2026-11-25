@@ -139,7 +139,7 @@ def _load_resume_checkpoint(
 
     try:
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
-    except pickle.UnpicklingError:
+    except (pickle.UnpicklingError, RuntimeError):
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
     if not isinstance(ckpt, dict):
@@ -291,7 +291,7 @@ def train_one_epoch(
     train_loader: DataLoader[Any],
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler.LRScheduler,
-    scaler: torch.amp.GradScaler,
+    scaler: Any,
     trainable_params: list[nn.Parameter],
     *,
     cfg: ExperimentConfig,
@@ -322,7 +322,7 @@ def train_one_epoch(
         optimizer.zero_grad(set_to_none=True)
 
         # 2. Forward pass under optional CUDA Automatic Mixed Precision (AMP)
-        with torch.amp.autocast(device_type=device.type, enabled=use_amp):
+        with torch.amp.autocast(device_type="cuda" if use_amp else "cpu", enabled=use_amp):
             loss_dict = model(device_images, device_targets)
             if not isinstance(loss_dict, dict) or not loss_dict:
                 raise RuntimeError(
@@ -428,6 +428,13 @@ def _validate_train_hyperparams(cfg: ExperimentConfig, total_epochs: int) -> Non
         raise ValueError(f"cfg.num_workers must be a non-negative int, got {cfg.num_workers!r}")
 
 
+def _build_grad_scaler(use_amp: bool) -> Any:
+    """Construct an AMP GradScaler compatible with PyTorch 2.2+ without deprecation warnings."""
+    if hasattr(torch.amp, "GradScaler"):
+        return torch.amp.GradScaler("cuda", enabled=use_amp)
+    return torch.cuda.amp.GradScaler(enabled=use_amp)
+
+
 def train_run(
     cfg: ExperimentConfig,
     data_dir: Path | str,
@@ -513,7 +520,7 @@ def train_run(
         warmup_steps=cfg.warmup_steps,
         total_steps=total_steps,
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    scaler = _build_grad_scaler(use_amp)
 
     step_log_path = logs_root / f"{cfg.run_name}_step_log.csv"
     epoch_log_path = logs_root / f"{cfg.run_name}_epoch_log.csv"

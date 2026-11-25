@@ -191,6 +191,56 @@ def test_plot_curves_cli_multi_run(tmp_path: Path) -> None:
     assert cmp_out.exists() and cmp_out.stat().st_size > 1000
 
 
+def test_plot_scale_and_latency_high_tiny_recall_legend_above_axes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import matplotlib.axes
+
+    evals: list[Path] = []
+    for run_name, ap50, tiny_recall, mean_ms in [
+        ("res_800", 0.96, 0.95, 32.0),
+        ("res_480", 0.93, 0.92, 16.0),
+        ("res_480_small_anchor", 0.97, 0.98, 16.8),
+    ]:
+        tp = int(round(tiny_recall * 100))
+        ev_path = tmp_path / f"{run_name}_test.json"
+        ev_path.write_text(
+            json.dumps(
+                {
+                    "run_name": run_name,
+                    "ap50": ap50,
+                    "by_scale": {
+                        "tiny": {"recall": tiny_recall, "gt_count": 100, "tp": tp, "fn": 100 - tp},
+                        "small": {"recall": 0.97, "gt_count": 100, "tp": 97, "fn": 3},
+                        "medium_large": {"recall": 0.99, "gt_count": 100, "tp": 99, "fn": 1},
+                    },
+                    "latency": {"mean_ms": mean_ms, "fps": 1000.0 / mean_ms},
+                }
+            ),
+            encoding="utf-8",
+        )
+        evals.append(ev_path)
+
+    legend_kwargs_seen: list[dict[str, Any]] = []
+    orig_legend = matplotlib.axes.Axes.legend
+
+    def _spy_legend(self: matplotlib.axes.Axes, *args: Any, **kwargs: Any) -> Any:
+        legend_kwargs_seen.append(dict(kwargs))
+        return orig_legend(self, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "legend", _spy_legend)
+
+    out_png = tmp_path / "high_tiny_recall.png"
+    plot_scale_and_latency(evals, out_png)
+    assert out_png.exists() and out_png.stat().st_size > 1000
+    assert len(legend_kwargs_seen) == 1
+    assert legend_kwargs_seen[0]["loc"] == "lower center"
+    assert legend_kwargs_seen[0]["bbox_to_anchor"] == (0.5, 1.02)
+    assert legend_kwargs_seen[0]["ncol"] == 3
+
+
+
 def test_predict_pack_and_single_image_cli(tmp_path: Path) -> None:
     cfg = load_config("configs/res_480.yaml")
     model = build_model(cfg, pretrained=False)

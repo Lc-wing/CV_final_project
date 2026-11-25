@@ -63,10 +63,10 @@ Verify installation and run the unit/integration test suite:
 ### Dataset — DUT Anti-UAV Detection
 - **Source:** Official DUT Anti-UAV Detection benchmark (Zhao et al., IEEE TITS 2023; Apache-2.0), mirrored byte-for-byte on Hugging Face at [`aegean-ai/dut-anti-uav`](https://huggingface.co/datasets/aegean-ai/dut-anti-uav).
 - **Official Splits:** `5,200` train (`5,243` boxes, 3 empty images) / `2,600` val (`2,621` boxes) / `2,200` test (`2,245` boxes), Pascal VOC XML annotations (`img/` + `xml/`).
-- **Local / Cloud Storage:** Stored outside git under `data/dut_anti_uav/` locally, or persisted on Google Drive under `MyDrive/CV_project/data/dut_anti_uav/` when using `notebooks/run_experiments.ipynb`.
+- **Local / Cloud Storage:** Stored outside git under `data/dut_anti_uav/` locally. In `notebooks/run_experiments.ipynb` on Google Colab, the dataset is extracted onto fast local SSD at `/content/data/dut_anti_uav` (avoiding Drive FUSE small-file I/O overhead across ~20,000 JPEG/XML files), while all persistent outputs (checkpoints, raw CSV logs, metrics, figures, and test-pack predictions) are written to Google Drive under `MyDrive/CV_project/` (on Kaggle, `/kaggle/working/data/dut_anti_uav` and `/kaggle/working/CV_project/`).
 
 ### Trained Model Checkpoints (`.pt`)
-To keep both the GitHub repository and the CS460 submission archive strictly `<= 50 MB`, full FP32 checkpoints (`~75 MB` each) are hosted externally (Google Drive `MyDrive/CV_project/checkpoints/` — [Project Drive Folder](https://drive.google.com/drive/folders/1iO-UKK3-DpAfsj9OokLrFWhuvh5JJHdm) — and/or GitHub Releases) and indexed in `checkpoints_manifest.json` with SHA-256 checksums.
+To keep both the GitHub repository and the CS460 submission archive strictly `<= 50 MB`, full-state FP32 checkpoints (`~210 MB` each, storing `model_state_dict` plus AdamW optimizer and scheduler state for seamless `--resume` recovery) are hosted externally (Google Drive `MyDrive/CV_project/checkpoints/` — [Project Drive Folder](https://drive.google.com/drive/folders/1iO-UKK3-DpAfsj9OokLrFWhuvh5JJHdm) — and/or GitHub Releases) and indexed in `checkpoints_manifest.json` with SHA-256 checksums.
 
 Download and verify all checkpoints with one command (after Phase 3 training populates `checkpoints_manifest.json`):
 
@@ -172,7 +172,7 @@ python -m src.build_submission --repo-root . --report-pdf report/CS460_Final_Rep
 
 ### 4.9 Cloud GPU Execution (Google Colab / Kaggle)
 
-Open `notebooks/run_experiments.ipynb` in Google Colab (auto-mounts `/content/drive/MyDrive/CV_project`) or Kaggle Notebooks (auto-detects `/kaggle/working/CV_project`) to execute Steps 4.1–4.6 on a free cloud GPU with automatic checkpoint resume.
+Open `notebooks/run_experiments.ipynb` in Google Colab (extracts DUT Anti-UAV onto fast local SSD at `/content/data/dut_anti_uav` while auto-mounting `/content/drive/MyDrive/CV_project` for persistent checkpoints, raw CSV logs, metrics, figures, and test-pack predictions) or Kaggle Notebooks (auto-detects `/kaggle/working/data/dut_anti_uav` and `/kaggle/working/CV_project`) to execute Steps 4.1–4.6 on a free cloud GPU with live streamed logs and automatic checkpoint resume.
 
 ---
 

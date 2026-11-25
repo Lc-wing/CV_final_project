@@ -370,12 +370,17 @@ def plot_scale_and_latency(
     x_bins = np.arange(len(SCALE_BIN_NAMES), dtype=np.float64)
     bar_width = min(0.27, 0.81 / float(n_runs))
 
+    legend_cols = min(n_runs, 3)
+    legend_rows = max(1, math.ceil(n_runs / legend_cols))
+    title_pad = 28 + 14 * (legend_rows - 1)
+    top_margin = max(0.70, 0.78 - 0.04 * (legend_rows - 1))
+
     fig = None
     try:
         fig, (ax_scale, ax_lat) = plt.subplots(
             1,
             2,
-            figsize=(14.4, 5.6),
+            figsize=(14.4, 5.9),
             gridspec_kw={"width_ratios": [1.35, 1.0]},
         )
 
@@ -409,9 +414,15 @@ def plot_scale_and_latency(
         ax_scale.set_xticklabels([SCALE_LABELS[b] for b in SCALE_BIN_NAMES])
         ax_scale.set_ylabel("Recall (%)")
         ax_scale.set_ylim(0.0, 120.0)
-        ax_scale.set_title("Recall by Original-Coordinate Target Scale")
+        ax_scale.set_title("Recall by Original-Coordinate Target Scale", pad=title_pad)
         ax_scale.grid(axis="y", linestyle="--", alpha=0.4)
-        ax_scale.legend(loc="upper left", fontsize=8.5, frameon=True)
+        ax_scale.legend(
+            loc="lower center",
+            bbox_to_anchor=(0.5, 1.02),
+            ncol=legend_cols,
+            fontsize=8.5,
+            frameon=True,
+        )
 
         # Right panel: single-image latency (ms) with FPS and overall AP50 annotations
         x_runs = np.arange(n_runs, dtype=np.float64)
@@ -445,17 +456,18 @@ def plot_scale_and_latency(
         )
         ax_lat.set_ylabel("Mean Latency (ms / image)")
         ax_lat.set_ylim(0.0, y_headroom)
-        ax_lat.set_title("Single-Image Inference Latency, FPS & Overall AP50")
+        ax_lat.set_title("Single-Image Inference Latency, FPS & Overall AP50", pad=title_pad)
         ax_lat.grid(axis="y", linestyle="--", alpha=0.4)
 
         fig.suptitle(
             "Anti-UAV Scale-Stratified Recall & Inference Speed Comparison",
             fontsize=12.5,
             fontweight="bold",
+            y=0.96,
         )
         source_caption = "Source eval JSONs: " + ", ".join(rec["json_file"] for rec in records)
         fig.text(0.5, 0.03, source_caption, ha="center", va="bottom", fontsize=8.5, color="#444444")
-        fig.subplots_adjust(top=0.83, bottom=0.19, left=0.07, right=0.97, wspace=0.25)
+        fig.subplots_adjust(top=top_margin, bottom=0.18, left=0.07, right=0.97, wspace=0.25)
         fig.savefig(out_file, dpi=150)
     finally:
         if fig is not None:

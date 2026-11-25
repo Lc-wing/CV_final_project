@@ -624,3 +624,113 @@ def test_epoch_log_flushed_before_last_checkpoint_commit_and_crash_rollback(
     assert [int(r["epoch"]) for r in step_rows] == [1, 1, 2, 2]
     assert [int(r["global_step"]) for r in step_rows] == [1, 2, 3, 4]
 
+
+def test_pytorch_compat_weights_only_runtime_error_grad_scaler_and_non_cuda_autocast(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+    import src.train as train_mod
+
+    # 1) _load_resume_checkpoint falls back to weights_only=False on RuntimeError (PyTorch 2.2-2.3)
+    ckpt_path = tmp_path / "res_480_last.pt"
+    payload = {
+        "model_state_dict": {},
+        "optimizer_state_dict": {},
+        "scheduler_state_dict": {},
+        "epoch": 1,
+        "global_step": 2,
+        "best_val_ap50": 0.5,
+        "run_name": "res_480",
+    }
+    torch.save(payload, ckpt_path)
+
+    real_load = torch.load
+    load_calls: list[tuple[Any, Any]] = []
+
+    def _runtime_error_on_weights_only(*args: Any, **kwargs: Any) -> Any:
+        load_calls.append((kwargs.get("map_location"), kwargs.get("weights_only")))
+        if kwargs.get("weights_only") is True:
+            raise RuntimeError("Simulated PyTorch 2.2 weights_only failure")
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr("src.train.torch.load", _runtime_error_on_weights_only)
+    loaded = _load_resume_checkpoint(ckpt_path, expected_run_name="res_480")
+    assert loaded["run_name"] == "res_480"
+    assert load_calls == [("cpu", True), ("cpu", False)]
+
+    # 2) _build_grad_scaler uses torch.amp.GradScaler when available and falls back cleanly when absent
+    default_scaler = train_mod._build_grad_scaler(False)
+    assert default_scaler.is_enabled() is False
+
+    fallback_calls: list[bool] = []
+
+    class _FakeLegacyGradScaler:
+        def __init__(self, enabled: bool = True) -> None:
+            fallback_calls.append(enabled)
+            self._enabled = enabled
+
+        def is_enabled(self) -> bool:
+            return self._enabled
+
+    monkeypatch.delattr(torch.amp, "GradScaler", raising=False)
+    monkeypatch.setattr(torch.cuda.amp, "GradScaler", _FakeLegacyGradScaler)
+    legacy_scaler = train_mod._build_grad_scaler(False)
+    assert isinstance(legacy_scaler, _FakeLegacyGradScaler)
+    assert fallback_calls == [False]
+
+    # 3) train_one_epoch uses device_type="cpu" in torch.amp.autocast when use_amp=False on non-CUDA (e.g. mps)
+    autocast_calls: list[tuple[Any, Any]] = []
+    real_autocast = torch.amp.autocast
+
+    def _spy_autocast(*args: Any, **kwargs: Any) -> Any:
+        dev_type = kwargs.get("device_type", args[0] if args else None)
+        autocast_calls.append((dev_type, kwargs.get("enabled")))
+        return real_autocast(*args, **kwargs)
+
+    monkeypatch.setattr("src.train.torch.amp.autocast", _spy_autocast)
+
+    class _CpuProxyTensor:
+        def __init__(self, tensor: torch.Tensor) -> None:
+            self._tensor = tensor
+
+        def to(self, _device: Any, non_blocking: bool = False) -> torch.Tensor:
+            return self._tensor
+
+    toy = _ToyDetector()
+    trainable = [p for p in toy.parameters() if p.requires_grad]
+    opt = torch.optim.AdamW(trainable, lr=1e-3)
+    sched = build_lr_scheduler(opt, warmup_steps=1, total_steps=2)
+    cfg = load_config("configs/res_480.yaml")
+
+    fake_batch = (
+        [_CpuProxyTensor(torch.zeros((3, 16, 16), dtype=torch.float32))],
+        [
+            {
+                "boxes": _CpuProxyTensor(torch.tensor([[1.0, 1.0, 5.0, 5.0]])),
+                "labels": _CpuProxyTensor(torch.tensor([1], dtype=torch.int64)),
+                "image_id": _CpuProxyTensor(torch.tensor([0], dtype=torch.int64)),
+            }
+        ],
+    )
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(STEP_LOG_COLUMNS))
+    writer.writeheader()
+
+    avgs, gstep, _ = train_mod.train_one_epoch(
+        toy,
+        [fake_batch],  # type: ignore[arg-type]
+        opt,
+        sched,
+        default_scaler,
+        trainable,
+        cfg=cfg,
+        device=torch.device("mps"),
+        use_amp=False,
+        epoch=1,
+        global_step=0,
+        step_writer=writer,
+        step_fh=buf,
+    )
+    assert gstep == 1 and avgs["train_total_loss"] > 0.0
+    assert autocast_calls == [("cpu", False)]
