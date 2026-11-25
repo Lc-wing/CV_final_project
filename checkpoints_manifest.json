@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "project": "CS460 Anti-UAV Detection (Faster R-CNN MobileNetV3-Large-FPN)",
-  "hosting_instructions": "Full-state FP32 checkpoints (best validation AP50 epoch) from completed Phase 3 T4 GPU training are hosted via public read-only Google Drive links (stored in MyDrive/CV_project/checkpoints/) with verified SHA-256 checksums.",
+  "project": "Anti-UAV Detection (Faster R-CNN MobileNetV3-Large-FPN)",
+  "hosting_instructions": "Full-state FP32 best-validation checkpoints trained on T4 GPU are hosted via public read-only Google Drive links with SHA-256 checksums.",
   "checkpoints": [
     {
       "run_name": "res_800",

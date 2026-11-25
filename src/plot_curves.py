@@ -169,7 +169,7 @@ def plot_training_loss(
 
     Verifies that every row's ``run_name`` matches its raw CSV filename prefix
     (e.g., ``res_800`` matches ``res_800_epoch_log.csv`` or ``res_800_step_log.csv``)
-    and labels each curve with both ``run_name`` and source filename for spot-check
+    and labels each curve with both ``run_name`` and source filename for direct
     traceability.
     """
     if x_axis not in VALID_X_AXES:

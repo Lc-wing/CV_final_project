@@ -9,5 +9,5 @@ checkpoints/
 .DS_Store
 submission_build/
 .superpowers/
-report/CS460_Final_Report_Draft.docx
+*.docx
 

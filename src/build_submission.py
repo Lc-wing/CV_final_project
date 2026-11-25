@@ -1,4 +1,4 @@
-"""CS460 <= 50 MB submission zip packager with strict checklist and run_name validation."""
+"""Archive packager with size-limit enforcement and cross-artifact run_name consistency checks."""
 
 from __future__ import annotations
 
@@ -32,7 +32,10 @@ EXCLUDED_DIRS: frozenset[str] = frozenset(
         "__pycache__",
         "data",
         "checkpoints",
+        "docs",
+        "report",
         "submission_build",
+        "tests",
         "node_modules",
     }
 )
@@ -269,21 +272,21 @@ def _validate_test_pack_and_predictions(
             )
 
 
-def _validate_required_deliverables(root: Path, report_path: Path) -> set[str]:
+def _validate_bundle_inputs(root: Path, report_path: Path) -> set[str]:
     if not report_path.is_file() or report_path.stat().st_size == 0:
-        raise FileNotFoundError(f"Required report PDF not found or empty: {report_path}")
+        raise FileNotFoundError(f"Report PDF not found or empty: {report_path}")
 
     readme_path = root / "README.md"
     if not readme_path.is_file():
-        raise FileNotFoundError(f"Required README.md not found: {readme_path}")
+        raise FileNotFoundError(f"README.md not found: {readme_path}")
 
     req_path = root / "requirements.txt"
     if not req_path.is_file():
-        raise FileNotFoundError(f"Required requirements.txt not found: {req_path}")
+        raise FileNotFoundError(f"requirements.txt not found: {req_path}")
 
     src_dir = root / "src"
     if not src_dir.is_dir() or not any(src_dir.glob("*.py")):
-        raise FileNotFoundError(f"Required src/ directory with Python source files not found: {src_dir}")
+        raise FileNotFoundError(f"src/ directory with Python source files not found: {src_dir}")
 
     configured_runs = _validate_configs(root / "configs")
     _validate_raw_csv_logs(root / "results" / "logs", configured_runs)
@@ -305,7 +308,7 @@ def _collect_bundle_files(
     for dirpath, dirnames, filenames in os.walk(root):
         current_dir = Path(dirpath)
         # Prune excluded directories in-place so large data/, .venv/, .git/, checkpoints/,
-        # and internal docs/superpowers/ trees are never traversed.
+        # docs/, report/, and tests/ trees are never traversed.
         dirnames[:] = sorted(
             d
             for d in dirnames
@@ -347,10 +350,10 @@ def build_submission_zip(
     report_pdf: Path | str,
     max_bytes: int = DEFAULT_MAX_SUBMISSION_BYTES,
 ) -> dict[str, Any]:
-    """Validate CS460 submission invariants and package a strictly ``<= max_bytes`` zip archive.
+    """Validate project artifacts and package a strictly ``<= max_bytes`` zip archive.
 
-    Enforces:
-    1. All required CS460 checklist deliverables exist.
+    Checks:
+    1. Core project files (report PDF, README, configs, code, logs, sample pack) exist.
     2. Strict ``run_name`` consistency across ``configs/*.yaml``, raw CSV training logs,
        optional evaluation JSONs, and ``submission_pack/predictions/test_pack_predictions.csv``.
     3. Zero weight files (``.pt``/``.pth``) or excluded directories bundled in the zip.
@@ -367,7 +370,7 @@ def build_submission_zip(
     report_path = Path(report_pdf)
     zip_path = Path(out_zip)
 
-    configured_runs = _validate_required_deliverables(root, report_path)
+    configured_runs = _validate_bundle_inputs(root, report_path)
 
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     out_zip_resolved = zip_path.resolve()
@@ -389,7 +392,7 @@ def build_submission_zip(
     ]
     if leaked_weights:
         raise ValueError(
-            f"Refusing to bundle model weight files into submission zip: {leaked_weights}"
+            f"Refusing to bundle model weight files into archive: {leaked_weights}"
         )
 
     with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -401,7 +404,7 @@ def build_submission_zip(
     if size_bytes > max_bytes:
         zip_path.unlink(missing_ok=True)
         raise ValueError(
-            f"Submission zip size ({size_bytes:,} bytes) exceeds max_bytes limit "
+            f"Archive size ({size_bytes:,} bytes) exceeds max_bytes limit "
             f"({max_bytes:,} bytes); archive was removed."
         )
 
@@ -420,7 +423,7 @@ def build_submission_zip(
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the CLI argument parser for ``python -m src.build_submission``."""
     parser = argparse.ArgumentParser(
-        description="Validate CS460 checklist & run_name consistency and build a <=50 MB submission zip."
+        description="Validate run_name consistency across configs/logs/predictions and build a <=50 MB project zip."
     )
     parser.add_argument(
         "--repo-root",
@@ -432,25 +435,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--report-pdf",
         type=Path,
         required=True,
-        help="Path to the final exported CS460 report PDF.",
+        help="Path to the final report PDF.",
     )
     parser.add_argument(
         "--out-zip",
         type=Path,
         required=True,
-        help="Output path for the verified submission zip archive.",
+        help="Output path for the packaged zip archive.",
     )
     parser.add_argument(
         "--max-bytes",
         type=int,
         default=DEFAULT_MAX_SUBMISSION_BYTES,
-        help=f"Maximum allowed submission zip size in bytes (default: {DEFAULT_MAX_SUBMISSION_BYTES}).",
+        help=f"Maximum allowed zip size in bytes (default: {DEFAULT_MAX_SUBMISSION_BYTES}).",
     )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for building the verified CS460 submission zip."""
+    """CLI entry point for building the packaged project zip."""
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     info = build_submission_zip(

@@ -434,10 +434,13 @@ def test_notebook_and_documentation_artifacts_are_valid() -> None:
     assert "aegean-ai/dut-anti-uav" in readme_text
     assert "scripts.download_checkpoints" in readme_text
     assert "src.build_submission" in readme_text
-    assert "report.build_report_docx" in readme_text
+    assert "src.predict_single" in readme_text
     assert "/content/data/dut_anti_uav" in readme_text
     assert "216.5 MB" in readme_text
     assert "01065" in readme_text
+    assert "spot-check" not in readme_text.lower()
+    assert "spot_check" not in readme_text.lower()
+    assert "checklist" not in readme_text.lower()
 
 
 def test_build_submission_checks_step_logs_eval_jsons_and_cli(tmp_path: Path) -> None:
@@ -799,7 +802,7 @@ def test_build_submission_excludes_docs_superpowers_and_enforces_cartesian_predi
     with pytest.raises(ValueError, match="Duplicate"):
         build_submission_zip(tmp_path, out_zip, report_pdf)
 
-    # 3) Exact full Cartesian coverage succeeds, bundles docs/spot_check_guide.md, and prunes docs/superpowers/
+    # 3) Exact full Cartesian coverage succeeds and prunes docs/, report/, and tests/
     pred_csv.write_text(
         "sample_id,run_name\n"
         "00001,res_800\n"
@@ -814,6 +817,10 @@ def test_build_submission_excludes_docs_superpowers_and_enforces_cartesian_predi
         "# Internal\n",
         encoding="utf-8",
     )
+    (tmp_path / "report").mkdir(exist_ok=True)
+    (tmp_path / "report" / "build_report_docx.py").write_text("# Draft builder\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir(exist_ok=True)
+    (tmp_path / "tests" / "test_dummy.py").write_text("# Test\n", encoding="utf-8")
 
     visited_dirs: list[str] = []
     orig_walk = real_os.walk
@@ -829,8 +836,10 @@ def test_build_submission_excludes_docs_superpowers_and_enforces_cartesian_predi
 
     with zipfile.ZipFile(out_zip, "r") as zf:
         names = set(zf.namelist())
-    assert "docs/spot_check_guide.md" in names
-    assert not any(name == "docs/superpowers" or name.startswith("docs/superpowers/") for name in names)
-    assert not any(
-        d == "docs/superpowers" or d.startswith("docs/superpowers/") for d in visited_dirs
-    )
+    for excluded_dir in ("docs", "report", "tests"):
+        assert not any(
+            name == excluded_dir or name.startswith(f"{excluded_dir}/") for name in names
+        )
+        assert not any(
+            d == excluded_dir or d.startswith(f"{excluded_dir}/") for d in visited_dirs
+        )

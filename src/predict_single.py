@@ -1,4 +1,4 @@
-"""Single-image spot-check CLI inference tool for trained Anti-UAV Faster R-CNN checkpoints."""
+"""Single-image CLI inference tool for trained Anti-UAV Faster R-CNN checkpoints."""
 
 from __future__ import annotations
 
@@ -198,7 +198,7 @@ def predict_single_image(
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the CLI argument parser for ``python -m src.predict_single``."""
     parser = argparse.ArgumentParser(
-        description="Spot-check single-image Anti-UAV Faster R-CNN inference with JSON output and optional PNG overlay."
+        description="Single-image Anti-UAV Faster R-CNN inference with JSON output and optional PNG overlay."
     )
     parser.add_argument(
         "--config",
@@ -240,7 +240,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for single-image Anti-UAV spot-check inference."""
+    """CLI entry point for single-image Anti-UAV inference."""
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 

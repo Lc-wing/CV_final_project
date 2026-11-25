@@ -144,7 +144,7 @@ def _download_to_path(url: str, dest_part: Path) -> None:
 
     req = urllib.request.Request(
         resolved_url,
-        headers={"User-Agent": "cs460-anti-uav-checkpoint-downloader/1.0"},
+        headers={"User-Agent": "anti-uav-checkpoint-downloader/1.0"},
     )
     with urllib.request.urlopen(req, timeout=120) as response, dest_part.open("wb") as out_fh:
         while True:
