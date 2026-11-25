@@ -66,9 +66,15 @@ Verify installation and run the unit/integration test suite:
 - **Local / Cloud Storage:** Stored outside git under `data/dut_anti_uav/` locally. In `notebooks/run_experiments.ipynb` on Google Colab, the dataset is extracted onto fast local SSD at `/content/data/dut_anti_uav` (avoiding Drive FUSE small-file I/O overhead across ~20,000 JPEG/XML files), while all persistent outputs (checkpoints, raw CSV logs, metrics, figures, and test-pack predictions) are written to Google Drive under `MyDrive/CV_project/` (on Kaggle, `/kaggle/working/data/dut_anti_uav` and `/kaggle/working/CV_project/`).
 
 ### Trained Model Checkpoints (`.pt`)
-To keep both the GitHub repository and the CS460 submission archive strictly `<= 50 MB`, full-state FP32 checkpoints (`~210 MB` each, storing `model_state_dict` plus AdamW optimizer and scheduler state for seamless `--resume` recovery) are hosted externally (Google Drive `MyDrive/CV_project/checkpoints/` — [Project Drive Folder](https://drive.google.com/drive/folders/1iO-UKK3-DpAfsj9OokLrFWhuvh5JJHdm) — and/or GitHub Releases) and indexed in `checkpoints_manifest.json` with SHA-256 checksums.
+To keep both the GitHub repository and the CS460 submission archive strictly `<= 50 MB`, full-state FP32 checkpoints (`~216.5 MB` each, storing `model_state_dict` plus AdamW optimizer and scheduler state for seamless `--resume` recovery) are hosted via public read-only Google Drive links and indexed in `checkpoints_manifest.json` with verified SHA-256 checksums:
 
-Download and verify all checkpoints with one command (after Phase 3 training populates `checkpoints_manifest.json`):
+| Run Name | Checkpoint | Size | Download Link | SHA-256 |
+| --- | --- | --- | --- | --- |
+| `res_800` | `res_800_best.pt` | 216.5 MB | [Google Drive](https://drive.google.com/file/d/194mwB_4aQ2TRUvg_dST3CU2eW0MGzjrl/view?usp=sharing) | `8cfea819fb83a37d2196c8fadc7c208e8532f0f7744e6eb62c1a4bfc207960e5` |
+| `res_480` | `res_480_best.pt` | 216.5 MB | [Google Drive](https://drive.google.com/file/d/1pnCVO0ut1IbTOIs6yHiPbVdOiemrHgFr/view?usp=sharing) | `bf3d5de79922b472ffa7079099effece461729934e8fd5963004e7bf4e6da7b8` |
+| `res_480_small_anchor` | `res_480_small_anchor_best.pt` | 216.5 MB | [Google Drive](https://drive.google.com/file/d/1XjNkwxsq9lLFl4T90Ou9hkDZ50f0TFBO/view?usp=sharing) | `4ea2facc4803c7f0389f46c24a30078b3e1a5f328852cdcbe8d608c6c1ba6908` |
+
+Download and SHA-256 verify all checkpoints automatically with one command:
 
 ```bash
 python -m scripts.download_checkpoints --manifest checkpoints_manifest.json --out-dir checkpoints
@@ -176,24 +182,32 @@ Open `notebooks/run_experiments.ipynb` in Google Colab (extracts DUT Anti-UAV on
 
 ---
 
-## 5. Named Sample Expected Output
+## 5. Verified Results & Named Sample Expected Output
 
-> **Status:** `TBD — populate after Phase 4 real GPU evaluation on submission_pack/test_pack/`.
+### 5.1 Official Held-Out Test Split Summary (2,200 images, 2,245 GT UAV boxes; `score >= 0.50`, `IoU >= 0.50`)
 
-After Phase 4 generates `submission_pack/predictions/test_pack_predictions.csv`, replace the placeholder table below with an actual held-out sample ID from `submission_pack/test_pack/img/` and its saved predictions across all three runs:
+| Run Name | Best Val Epoch (`val_AP50`) | Test `AP50` | Test `AP75` | Precision / Recall (TP / FP / FN) | Tiny Recall (`< 0.031%`) | Small Recall | Medium/Large Recall | T4 Latency |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `res_800` | Epoch 11 (`0.8552`) | **0.9132** | **0.6004** | 0.8913 / **0.9060** (2034 / 248 / 211) | **0.7895** (375/475) | **0.9055** (527/582) | **0.9529** (1132/1188) | 18.81 ms (53.2 FPS) |
+| `res_480` | Epoch 10 (`0.7321`) | 0.8310 | 0.4333 | 0.8578 / 0.8089 (1816 / 301 / 429) | 0.6126 (291/475) | 0.7560 (440/582) | 0.9133 (1085/1188) | **15.76 ms (63.4 FPS)** |
+| `res_480_small_anchor` | Epoch 12 (`0.7327`) | 0.8064 | 0.4149 | 0.8466 / 0.7991 (1794 / 325 / 451) | 0.6084 (289/475) | 0.7423 (432/582) | 0.9032 (1073/1188) | 16.03 ms (62.4 FPS) |
 
-| Field | Expected Value (Format Preview) |
+### 5.2 Named Sample Expected Output (`sample_id = 01065`)
+
+The curated 9-image held-out test pack in `submission_pack/test_pack/` (`00045`, `00548`, `00554`, `01065`, `01541`, `01808`, `01902`, `01982`, `02137`) has saved multi-model predictions in `submission_pack/predictions/test_pack_predictions.csv` and side-by-side panels in `submission_pack/predictions/visuals/`.
+
+| Field | Verified Expected Output (`submission_pack/test_pack/img/01065.jpg`) |
 | --- | --- |
-| `sample_id` | `<TBD_SAMPLE_ID>` (e.g., `00001` from `submission_pack/test_pack/img/<TBD_SAMPLE_ID>.jpg`) |
-| Ground Truth Box (`orig px`) | `[[x1, y1, x2, y2]]` (scale bin: `tiny` / `small` / `medium_large`) |
-| `res_800` Prediction (`score >= 0.50`) | `num_detections=<N>`, `boxes=[[...]]`, `scores=[...]`, `TP/FP/FN=<...>` |
-| `res_480` Prediction (`score >= 0.50`) | `num_detections=<N>`, `boxes=[[...]]`, `scores=[...]`, `TP/FP/FN=<...>` |
-| `res_480_small_anchor` Prediction (`score >= 0.50`) | `num_detections=<N>`, `boxes=[[...]]`, `scores=[...]`, `TP/FP/FN=<...>` |
+| `sample_id` | `01065` (`1280 x 720`, scale bin: `medium_large`, area ratio `0.036214`) |
+| Ground Truth Box (`orig px`) | `[[502.0, 224.0, 769.0, 349.0]]` (`gt_count = 1`) |
+| `res_800` (`res_800_best.pt`) | `num_detections=1`, `boxes=[[496.3224, 220.8343, 766.4027, 354.7534]]`, `scores=[0.999953]`, `TP=1, FP=0, FN=0` |
+| `res_480` (`res_480_best.pt`) | `num_detections=1`, `boxes=[[501.9165, 223.488, 766.2946, 357.0057]]`, `scores=[0.999668]`, `TP=1, FP=0, FN=0` |
+| `res_480_small_anchor` (`res_480_small_anchor_best.pt`) | `num_detections=1`, `boxes=[[506.8465, 220.3476, 766.6667, 356.6948]]`, `scores=[0.999816]`, `TP=1, FP=0, FN=0` |
 
-Example command to reproduce the named sample prediction directly:
+Exact command to reproduce the named sample prediction directly:
 
 ```bash
-python -m src.predict_single --config configs/res_800.yaml --checkpoint checkpoints/res_800_best.pt --image submission_pack/test_pack/img/<TBD_SAMPLE_ID>.jpg --score-thresh 0.50 --out-image results/figures/named_sample_check.png
+python -m src.predict_single --config configs/res_800.yaml --checkpoint checkpoints/res_800_best.pt --image submission_pack/test_pack/img/01065.jpg --score-thresh 0.50 --out-image results/figures/named_sample_01065_check.png
 ```
 
 ---

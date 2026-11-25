@@ -1,0 +1,50 @@
+{
+  "run_name": "res_480_small_anchor",
+  "split": "test",
+  "checkpoint": "/content/drive/MyDrive/CV_project/checkpoints/res_480_small_anchor_best.pt",
+  "ap50": 0.8063538676064996,
+  "ap75": 0.41487984137523826,
+  "ap50_95": 0.43846456246282195,
+  "fixed_threshold": {
+    "score_thresh": 0.5,
+    "iou_thresh": 0.5,
+    "tp": 1794,
+    "fp": 325,
+    "fn": 451,
+    "gt_count": 2245,
+    "pred_count": 2119,
+    "precision": 0.8466257668711656,
+    "recall": 0.799109131403118,
+    "f1": 0.8221814848762603
+  },
+  "by_scale": {
+    "tiny": {
+      "gt_count": 475,
+      "tp": 289,
+      "fn": 186,
+      "recall": 0.608421052631579,
+      "ap50": 0.596973370345764
+    },
+    "small": {
+      "gt_count": 582,
+      "tp": 432,
+      "fn": 150,
+      "recall": 0.7422680412371134,
+      "ap50": 0.7491470011553099
+    },
+    "medium_large": {
+      "gt_count": 1188,
+      "tp": 1073,
+      "fn": 115,
+      "recall": 0.9031986531986532,
+      "ap50": 0.9096003643781216
+    }
+  },
+  "latency": {
+    "mean_ms": 16.030006260025402,
+    "median_ms": 16.021786999772303,
+    "fps": 62.38300745357384,
+    "num_images": 100,
+    "device": "cuda"
+  }
+}

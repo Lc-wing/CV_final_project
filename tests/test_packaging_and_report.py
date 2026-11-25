@@ -255,16 +255,36 @@ def test_build_report_docx_populates_official_template_structure(tmp_path: Path)
 
 
 def test_download_checkpoints_manifest_placeholder_and_local_file(tmp_path: Path) -> None:
-    # Repository manifest must declare all 3 controlled runs with placeholders
+    # Repository manifest must declare all 3 controlled runs with valid URLs and SHA-256 digests
     repo_manifest = REPO_ROOT / "checkpoints_manifest.json"
     assert repo_manifest.is_file()
     manifest_data = json.loads(repo_manifest.read_text(encoding="utf-8"))
     entries = manifest_data["checkpoints"]
     assert {e["run_name"] for e in entries} == {"res_800", "res_480", "res_480_small_anchor"}
+    for entry in entries:
+        assert entry["url"].startswith("https://")
+        assert len(entry["sha256"]) == 64
+        int(entry["sha256"], 16)
 
-    # Downloading placeholder manifest must fail cleanly with actionable message
+    # Downloading a placeholder manifest must fail cleanly with actionable message
+    placeholder_manifest = tmp_path / "placeholder_manifest.json"
+    placeholder_manifest.write_text(
+        json.dumps(
+            {
+                "checkpoints": [
+                    {
+                        "run_name": "res_800",
+                        "filename": "res_800_best.pt",
+                        "url": "TBD_AFTER_PHASE_3_TRAINING",
+                        "sha256": "TBD_AFTER_PHASE_3_TRAINING",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     with pytest.raises(ValueError, match="TBD_AFTER_PHASE_3_TRAINING|placeholder"):
-        download_checkpoints(repo_manifest, tmp_path / "ckpts")
+        download_checkpoints(placeholder_manifest, tmp_path / "ckpts")
 
     # Local file:// download with valid SHA-256 succeeds and verifies checksum
     src_file = tmp_path / "res_800_best.pt"
@@ -416,7 +436,8 @@ def test_notebook_and_documentation_artifacts_are_valid() -> None:
     assert "src.build_submission" in readme_text
     assert "report.build_report_docx" in readme_text
     assert "/content/data/dut_anti_uav" in readme_text
-    assert "~210 MB" in readme_text
+    assert "216.5 MB" in readme_text
+    assert "01065" in readme_text
 
 
 def test_build_submission_checks_step_logs_eval_jsons_and_cli(tmp_path: Path) -> None:

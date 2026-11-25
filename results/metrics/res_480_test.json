@@ -1,0 +1,50 @@
+{
+  "run_name": "res_480",
+  "split": "test",
+  "checkpoint": "/content/drive/MyDrive/CV_project/checkpoints/res_480_best.pt",
+  "ap50": 0.8309883577450168,
+  "ap75": 0.4332787502106554,
+  "ap50_95": 0.45294949125366324,
+  "fixed_threshold": {
+    "score_thresh": 0.5,
+    "iou_thresh": 0.5,
+    "tp": 1816,
+    "fp": 301,
+    "fn": 429,
+    "gt_count": 2245,
+    "pred_count": 2117,
+    "precision": 0.8578176665092111,
+    "recall": 0.8089086859688196,
+    "f1": 0.8326455754241174
+  },
+  "by_scale": {
+    "tiny": {
+      "gt_count": 475,
+      "tp": 291,
+      "fn": 184,
+      "recall": 0.6126315789473684,
+      "ap50": 0.6427208121210728
+    },
+    "small": {
+      "gt_count": 582,
+      "tp": 440,
+      "fn": 142,
+      "recall": 0.7560137457044673,
+      "ap50": 0.7767752759582368
+    },
+    "medium_large": {
+      "gt_count": 1188,
+      "tp": 1085,
+      "fn": 103,
+      "recall": 0.9132996632996633,
+      "ap50": 0.926880631063115
+    }
+  },
+  "latency": {
+    "mean_ms": 15.763955769980385,
+    "median_ms": 15.066343999933451,
+    "fps": 63.43585421016722,
+    "num_images": 100,
+    "device": "cuda"
+  }
+}

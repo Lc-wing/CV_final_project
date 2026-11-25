@@ -1,28 +1,31 @@
 {
   "schema_version": 1,
   "project": "CS460 Anti-UAV Detection (Faster R-CNN MobileNetV3-Large-FPN)",
-  "hosting_instructions": "After Phase 3 GPU training completes, upload *_best.pt checkpoints to Google Drive MyDrive/CV_project/checkpoints/ or GitHub Releases, compute SHA-256 hashes (sha256sum checkpoints/*_best.pt), and replace the TBD_AFTER_PHASE_3_TRAINING placeholders below.",
+  "hosting_instructions": "Full-state FP32 checkpoints (best validation AP50 epoch) from completed Phase 3 T4 GPU training are hosted via public read-only Google Drive links (stored in MyDrive/CV_project/checkpoints/) with verified SHA-256 checksums.",
   "checkpoints": [
     {
       "run_name": "res_800",
       "filename": "res_800_best.pt",
-      "url": "TBD_AFTER_PHASE_3_TRAINING",
-      "sha256": "TBD_AFTER_PHASE_3_TRAINING",
-      "hosting_note": "Google Drive MyDrive/CV_project/checkpoints/ or GitHub Releases"
+      "url": "https://drive.google.com/file/d/194mwB_4aQ2TRUvg_dST3CU2eW0MGzjrl/view?usp=sharing",
+      "sha256": "8cfea819fb83a37d2196c8fadc7c208e8532f0f7744e6eb62c1a4bfc207960e5",
+      "size_bytes": 227057031,
+      "hosting_note": "Public read-only Google Drive link (MyDrive/CV_project/checkpoints/res_800_best.pt)"
     },
     {
       "run_name": "res_480",
       "filename": "res_480_best.pt",
-      "url": "TBD_AFTER_PHASE_3_TRAINING",
-      "sha256": "TBD_AFTER_PHASE_3_TRAINING",
-      "hosting_note": "Google Drive MyDrive/CV_project/checkpoints/ or GitHub Releases"
+      "url": "https://drive.google.com/file/d/1pnCVO0ut1IbTOIs6yHiPbVdOiemrHgFr/view?usp=sharing",
+      "sha256": "bf3d5de79922b472ffa7079099effece461729934e8fd5963004e7bf4e6da7b8",
+      "size_bytes": 227057031,
+      "hosting_note": "Public read-only Google Drive link (MyDrive/CV_project/checkpoints/res_480_best.pt)"
     },
     {
       "run_name": "res_480_small_anchor",
       "filename": "res_480_small_anchor_best.pt",
-      "url": "TBD_AFTER_PHASE_3_TRAINING",
-      "sha256": "TBD_AFTER_PHASE_3_TRAINING",
-      "hosting_note": "Google Drive MyDrive/CV_project/checkpoints/ or GitHub Releases"
+      "url": "https://drive.google.com/file/d/1XjNkwxsq9lLFl4T90Ou9hkDZ50f0TFBO/view?usp=sharing",
+      "sha256": "4ea2facc4803c7f0389f46c24a30078b3e1a5f328852cdcbe8d608c6c1ba6908",
+      "size_bytes": 227063851,
+      "hosting_note": "Public read-only Google Drive link (MyDrive/CV_project/checkpoints/res_480_small_anchor_best.pt)"
     }
   ]
 }

@@ -1,0 +1,21 @@
+{
+  "metric": "relative_box_area_ratio",
+  "edges": {
+    "tiny_max": 0.00031,
+    "small_max": 0.00079
+  },
+  "train_counts": {
+    "tiny": 1739,
+    "small": 1751,
+    "medium_large": 1753
+  },
+  "val_counts": {
+    "tiny": 892,
+    "small": 863,
+    "medium_large": 865
+  },
+  "source_splits": [
+    "train",
+    "val"
+  ]
+}
