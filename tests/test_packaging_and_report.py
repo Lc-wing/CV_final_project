@@ -460,3 +460,206 @@ def test_download_checkpoints_cli_verify_only_and_cache_hit(tmp_path: Path) -> N
         download_checkpoints(bad_name_manifest, out_dir)
 
 
+def test_build_submission_allows_eda_and_validates_val_metrics_jsons(tmp_path: Path) -> None:
+    report_pdf = _create_minimal_compliant_repo(tmp_path)
+    metrics_dir = tmp_path / "results" / "metrics"
+    metrics_dir.mkdir(parents=True)
+
+    # Canonical EDA outputs from src.prepare_data (note eda_train_val.json ends with _val.json!)
+    (metrics_dir / "eda_train_val.json").write_text(
+        json.dumps(
+            {
+                "source_splits": ["train", "val"],
+                "splits": {"train": {"num_images": 10}, "val": {"num_images": 5}},
+                "scale_bins": {"edges": {"tiny_max": 0.01, "small_max": 0.05}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (metrics_dir / "scale_bins.json").write_text(
+        json.dumps({"edges": {"tiny_max": 0.01, "small_max": 0.05}}),
+        encoding="utf-8",
+    )
+    (metrics_dir / "res_800_val.json").write_text(
+        json.dumps({"run_name": "res_800", "split": "val", "ap50": 0.68}),
+        encoding="utf-8",
+    )
+
+    out_zip = tmp_path / "sub_with_eda.zip"
+    info = build_submission_zip(tmp_path, out_zip, report_pdf)
+    assert out_zip.is_file() and info["size_bytes"] > 0
+
+    with zipfile.ZipFile(out_zip, "r") as zf:
+        names = set(zf.namelist())
+    assert "results/metrics/eda_train_val.json" in names
+    assert "results/metrics/scale_bins.json" in names
+    assert "results/metrics/res_800_val.json" in names
+
+    # Drifted *_val.json evaluation file must still fail hard
+    (metrics_dir / "res_800_val.json").write_text(
+        json.dumps({"run_name": "wrong_val_run", "split": "val", "ap50": 0.68}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="run_name"):
+        build_submission_zip(tmp_path, out_zip, report_pdf)
+
+
+def test_build_submission_enforces_full_run_sample_coverage_and_prunes_walk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os as real_os
+    import src.build_submission as bs_mod
+
+    report_pdf = _create_minimal_compliant_repo(tmp_path)
+
+    # Add a second configured run without epoch log -> must fail
+    (tmp_path / "configs" / "res_480.yaml").write_text("run_name: res_480\n", encoding="utf-8")
+    out_zip = tmp_path / "coverage.zip"
+    with pytest.raises(ValueError, match="res_480"):
+        build_submission_zip(tmp_path, out_zip, report_pdf)
+
+    # Add res_480 epoch log, but omit res_480 from test_pack_predictions.csv -> must fail
+    (tmp_path / "results" / "logs" / "res_480_epoch_log.csv").write_text(
+        "run_name,epoch,train_total_loss\nres_480,1,0.6\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="res_480"):
+        build_submission_zip(tmp_path, out_zip, report_pdf)
+
+    # Include res_480 with a stale/unknown sample_id not in test_pack/img/ -> must fail
+    (tmp_path / "submission_pack" / "predictions" / "test_pack_predictions.csv").write_text(
+        "sample_id,run_name\n00001,res_800\n99999,res_480\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="99999"):
+        build_submission_zip(tmp_path, out_zip, report_pdf)
+
+    # Fix sample_id and verify os.walk prunes excluded dirs without descending into them
+    (tmp_path / "submission_pack" / "predictions" / "test_pack_predictions.csv").write_text(
+        "sample_id,run_name\n00001,res_800\n00001,res_480\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "data" / "nested_heavy").mkdir(parents=True)
+    (tmp_path / "data" / "nested_heavy" / "img.jpg").write_bytes(b"img")
+    (tmp_path / ".venv" / "lib" / "site-packages").mkdir(parents=True)
+    (tmp_path / ".venv" / "lib" / "site-packages" / "pkg.py").write_text("# pkg\n", encoding="utf-8")
+
+    visited_dirs: list[str] = []
+    orig_walk = real_os.walk
+
+    def tracking_walk(top: Path | str):
+        for dirpath, dirnames, filenames in orig_walk(top):
+            visited_dirs.append(Path(dirpath).relative_to(tmp_path).as_posix())
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(bs_mod.os, "walk", tracking_walk)
+    info = build_submission_zip(tmp_path, out_zip, report_pdf)
+    assert out_zip.is_file() and info["runs"] == ["res_480", "res_800"]
+    assert not any(
+        d == "data" or d.startswith("data/") or d == ".venv" or d.startswith(".venv/")
+        for d in visited_dirs
+    )
+
+
+def test_build_report_docx_preserves_typography_table_borders_and_all_featured_samples(
+    tmp_path: Path,
+) -> None:
+    from docx.shared import Pt
+
+    tpl = tmp_path / "styled_template.docx"
+    doc = Document()
+    doc.add_paragraph("2609 CS460 ")
+    title_p = doc.add_paragraph()
+    title_run = title_p.add_run("[Title of your investigation]")
+    title_run.bold = True
+    title_run.font.name = "Times New Roman"
+    title_run.font.size = Pt(26)
+
+    doc.add_heading("4  Experimental Setup and Evaluation", level=1)
+    doc.add_heading("Training record from your experiment", level=2)
+    doc.add_paragraph("[Insert your training-loss curve here.]")
+    doc.add_heading("5  Results and Discussion", level=1)
+    tbl = doc.add_table(rows=3, cols=4)
+    tbl.style = "Table Grid"
+    for ci, header in enumerate(("Approach", "Design choices", "Evidence or result", "Interpretation")):
+        cell = tbl.rows[0].cells[ci]
+        cell.paragraphs[0].clear()
+        hrun = cell.paragraphs[0].add_run(header)
+        hrun.bold = True
+        hrun.font.name = "Times New Roman"
+    doc.add_heading("Interpretation and exploration", level=2)
+    doc.add_paragraph("[Explain your own interpretation.]")
+    doc.save(tpl)
+
+    runs = ["res_800", "res_480", "res_480_small_anchor"]
+    eval_paths: list[Path] = []
+    for run_name in runs:
+        p = tmp_path / f"{run_name}_test.json"
+        p.write_text(
+            json.dumps(
+                {
+                    "run_name": run_name,
+                    "ap50": 0.70,
+                    "ap75": 0.45,
+                    "ap50_95": 0.42,
+                    "fixed_threshold": {"precision": 0.8, "recall": 0.7, "tp": 70, "fp": 17, "fn": 30},
+                    "by_scale": {
+                        "tiny": {"recall": 0.50, "tp": 50, "gt_count": 100},
+                        "small": {"recall": 0.75, "tp": 75, "gt_count": 100},
+                        "medium_large": {"recall": 0.90, "tp": 90, "gt_count": 100},
+                    },
+                    "latency": {"mean_ms": 20.0, "fps": 50.0},
+                }
+            ),
+            encoding="utf-8",
+        )
+        eval_paths.append(p)
+
+    fig = tmp_path / "fig.png"
+    Image.new("RGB", (200, 100)).save(fig)
+
+    # 5 sample IDs x 3 runs = 15 prediction rows (all 5 featured IDs must appear for all 3 runs)
+    sample_ids = ["00001", "00002", "00003", "00004", "00005"]
+    csv_lines = ["sample_id,run_name,gt_count,pred_count,tp,fp,fn"]
+    for sid in sample_ids:
+        for run_name in runs:
+            csv_lines.append(f"{sid},{run_name},1,1,1,0,0")
+    pred_csv = tmp_path / "preds_5x3.csv"
+    pred_csv.write_text("\n".join(csv_lines) + "\n", encoding="utf-8")
+
+    out_docx = tmp_path / "styled_draft.docx"
+    build_report_docx(tpl, eval_paths, fig, fig, [fig], pred_csv, out_docx)
+    built = Document(out_docx)
+
+    # 1) Cover title run styling preserved
+    title_matches = [p for p in built.paragraphs if "Small Targets at Speed" in p.text]
+    assert len(title_matches) == 1
+    out_title_run = title_matches[0].runs[0]
+    assert out_title_run.bold is True
+    assert out_title_run.font.name == "Times New Roman"
+    assert out_title_run.font.size == Pt(26)
+
+    # 2) Comparison table keeps Table Grid + bold Times New Roman header runs
+    comp_table = built.tables[0]
+    assert comp_table.style.name == "Table Grid"
+    for cell in comp_table.rows[0].cells:
+        assert cell.paragraphs[0].runs[0].bold is True
+        assert cell.paragraphs[0].runs[0].font.name == "Times New Roman"
+
+    # 3) Scale-stratified table inherits Table Grid + bold header runs
+    scale_table = built.tables[1]
+    assert scale_table.style.name == "Table Grid"
+    for cell in scale_table.rows[0].cells:
+        assert cell.paragraphs[0].runs[0].bold is True
+
+    # 4) Every announced featured sample_id appears for every run (5 x 3 = 15 rows, no truncation)
+    summary_paras = [p.text for p in built.paragraphs if "Test-pack prediction reference" in p.text]
+    assert len(summary_paras) == 1
+    summary_text = summary_paras[0]
+    for sid in sample_ids:
+        for run_name in runs:
+            assert f"sample_id={sid} | run={run_name}" in summary_text
+
+
+

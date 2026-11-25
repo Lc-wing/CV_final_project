@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,13 @@ import yaml
 DEFAULT_MAX_SUBMISSION_BYTES = 50 * 1024 * 1024
 
 IMAGE_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp"})
+
+NON_EVAL_METRICS_FILENAMES: frozenset[str] = frozenset(
+    {
+        "eda_train_val.json",
+        "scale_bins.json",
+    }
+)
 
 EXCLUDED_DIRS: frozenset[str] = frozenset(
     {
@@ -95,6 +103,7 @@ def _validate_raw_csv_logs(logs_dir: Path, configured_runs: set[str]) -> list[Pa
         *((p, "_step_log") for p in step_logs),
     ]
 
+    epoch_log_runs: set[str] = set()
     for log_path, suffix in all_logs:
         expected_run = log_path.stem[: -len(suffix)]
         if not expected_run or expected_run not in configured_runs:
@@ -122,7 +131,25 @@ def _validate_raw_csv_logs(logs_dir: Path, configured_runs: set[str]) -> list[Pa
             if row_count == 0:
                 raise ValueError(f"Raw log '{log_path.name}' contains no data rows")
 
+        if suffix == "_epoch_log":
+            epoch_log_runs.add(expected_run)
+
+    missing_epoch_runs = sorted(configured_runs - epoch_log_runs)
+    if missing_epoch_runs:
+        raise ValueError(
+            f"Missing *_epoch_log.csv for configured run_name(s): {missing_epoch_runs}"
+        )
+
     return [p for p, _ in all_logs]
+
+
+def _is_eda_json_payload(raw: dict[str, Any]) -> bool:
+    return (
+        "source_splits" in raw
+        and "splits" in raw
+        and "run_name" not in raw
+        and "split" not in raw
+    )
 
 
 def _validate_metrics_jsons(metrics_dir: Path, configured_runs: set[str]) -> None:
@@ -130,10 +157,14 @@ def _validate_metrics_jsons(metrics_dir: Path, configured_runs: set[str]) -> Non
         return
     for suffix in ("_test", "_val"):
         for json_path in sorted(metrics_dir.glob(f"*{suffix}.json")):
-            expected_run = json_path.stem[: -len(suffix)]
+            if json_path.name in NON_EVAL_METRICS_FILENAMES:
+                continue
             raw = json.loads(json_path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 raise ValueError(f"Evaluation JSON '{json_path.name}' must be a JSON object")
+            if _is_eda_json_payload(raw):
+                continue
+            expected_run = json_path.stem[: -len(suffix)]
             run_name = (
                 (raw.get("run_name") or "").strip()
                 if isinstance(raw.get("run_name"), str)
@@ -171,7 +202,9 @@ def _validate_test_pack_and_predictions(
     if not xml_files:
         raise FileNotFoundError(f"No XML annotations found in test-pack directory: {xml_dir}")
 
+    test_pack_sample_ids: set[str] = set()
     for img_path in img_files:
+        test_pack_sample_ids.add(img_path.stem)
         expected_xml = xml_dir / f"{img_path.stem}.xml"
         if not expected_xml.is_file():
             raise FileNotFoundError(
@@ -188,6 +221,7 @@ def _validate_test_pack_and_predictions(
                     f"Predictions CSV '{pred_csv.name}' missing required column '{required_col}'"
                 )
         row_count = 0
+        seen_pred_runs: set[str] = set()
         for row_idx, row in enumerate(reader, start=2):
             row_count += 1
             sample_id = (row.get("sample_id") or "").strip()
@@ -195,14 +229,27 @@ def _validate_test_pack_and_predictions(
                 raise ValueError(
                     f"Empty 'sample_id' at row {row_idx} of '{pred_csv.name}'"
                 )
+            if sample_id not in test_pack_sample_ids:
+                raise ValueError(
+                    f"Unknown sample_id {sample_id!r} at row {row_idx} of '{pred_csv.name}': "
+                    f"not present in test_pack/img/ ({sorted(test_pack_sample_ids)})"
+                )
             row_run = (row.get("run_name") or "").strip()
             if row_run not in configured_runs:
                 raise ValueError(
                     f"Drift in run_name at row {row_idx} of '{pred_csv.name}': "
                     f"{row_run!r} is not in configured runs {sorted(configured_runs)}"
                 )
+            seen_pred_runs.add(row_run)
         if row_count == 0:
             raise ValueError(f"Predictions CSV '{pred_csv.name}' contains no data rows")
+
+        missing_pred_runs = sorted(configured_runs - seen_pred_runs)
+        if missing_pred_runs:
+            raise ValueError(
+                f"Predictions CSV '{pred_csv.name}' missing rows for configured "
+                f"run_name(s): {missing_pred_runs}"
+            )
 
 
 def _validate_required_deliverables(root: Path, report_path: Path) -> set[str]:
@@ -234,42 +281,42 @@ def _collect_bundle_files(
     report_pdf_resolved: Path,
     report_arcname: str,
 ) -> tuple[list[tuple[Path, str]], list[str]]:
-    """Collect deterministic archive entries while refusing weight and ignored artifacts."""
+    """Collect deterministic archive entries using pruned ``os.walk`` while refusing weights."""
     entries: list[tuple[Path, str]] = []
     excluded_weights: list[str] = []
 
-    for candidate in sorted(root.rglob("*")):
-        if not candidate.is_file():
-            continue
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Prune excluded directories in-place so large data/, .venv/, .git/, checkpoints/
+        # trees are never traversed.
+        dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDED_DIRS)
 
-        rel = candidate.relative_to(root)
-        rel_parts = rel.parts
+        current_dir = Path(dirpath)
+        for fname in sorted(filenames):
+            if fname in EXCLUDED_FILENAMES:
+                continue
 
-        if any(part in EXCLUDED_DIRS for part in rel_parts[:-1]):
-            if candidate.suffix.lower() in WEIGHT_EXTENSIONS:
-                excluded_weights.append(rel.as_posix())
-            continue
+            candidate = current_dir / fname
+            if not candidate.is_file():
+                continue
 
-        if candidate.name in EXCLUDED_FILENAMES:
-            continue
+            resolved = candidate.resolve()
+            if resolved == out_zip_resolved or resolved == report_pdf_resolved:
+                continue
 
-        resolved = candidate.resolve()
-        if resolved == out_zip_resolved or resolved == report_pdf_resolved:
-            continue
+            arcname = candidate.relative_to(root).as_posix()
+            if arcname == report_arcname:
+                continue
 
-        arcname = rel.as_posix()
-        if arcname == report_arcname:
-            continue
+            suffix = candidate.suffix.lower()
+            if suffix in WEIGHT_EXTENSIONS:
+                excluded_weights.append(arcname)
+                continue
+            if suffix in EXCLUDED_EXTENSIONS:
+                continue
 
-        suffix = candidate.suffix.lower()
-        if suffix in WEIGHT_EXTENSIONS:
-            excluded_weights.append(arcname)
-            continue
-        if suffix in EXCLUDED_EXTENSIONS:
-            continue
+            entries.append((candidate, arcname))
 
-        entries.append((candidate, arcname))
-
+    entries.sort(key=lambda item: item[1])
     return entries, excluded_weights
 
 

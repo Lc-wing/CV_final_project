@@ -159,6 +159,40 @@ def _format_evidence_summary(rec: dict[str, Any]) -> str:
     )
 
 
+def _set_paragraph_text_preserving_style(para: Any, text: str) -> None:
+    """Update paragraph text while preserving the first run's font/bold/size styling."""
+    if para.runs:
+        para.runs[0].text = text
+        for extra_run in para.runs[1:]:
+            extra_run.text = ""
+    else:
+        para.text = text
+
+
+def _set_cell_text_preserving_style(cell: Any, text: str) -> None:
+    """Update cell text without stripping existing run styling (e.g., bold header runs)."""
+    if cell.text.strip() == text:
+        return
+    if cell.paragraphs and cell.paragraphs[0].runs:
+        _set_paragraph_text_preserving_style(cell.paragraphs[0], text)
+        for extra_para in cell.paragraphs[1:]:
+            extra_para.text = ""
+    else:
+        cell.text = text
+
+
+def _apply_table_style(doc: Any, table: Any, preferred_style: Any | None = None) -> None:
+    """Apply ``preferred_style`` (or ``Table Grid`` if available) to give crisp borders."""
+    if preferred_style is not None:
+        preferred_name = getattr(preferred_style, "name", str(preferred_style))
+        if preferred_name and preferred_name != "Normal Table":
+            table.style = preferred_style
+            return
+    available_styles = {s.name for s in doc.styles}
+    if "Table Grid" in available_styles:
+        table.style = "Table Grid"
+
+
 def _find_comparison_table(doc: Document) -> Any | None:
     for table in doc.tables:
         if len(table.columns) >= 4 and len(table.rows) >= 1:
@@ -170,13 +204,21 @@ def _find_comparison_table(doc: Document) -> Any | None:
 
 def _populate_comparison_table(doc: Document, records: list[dict[str, Any]]) -> Any:
     table = _find_comparison_table(doc)
+    created_new = table is None
     if table is None:
         doc.add_heading("Approach Comparison Summary", level=2)
         table = doc.add_table(rows=1 + len(records), cols=4)
+        _apply_table_style(doc, table)
 
     headers = ("Approach", "Design choices", "Evidence or result", "Interpretation")
     for col_idx, header in enumerate(headers):
-        table.rows[0].cells[col_idx].text = header
+        cell = table.rows[0].cells[col_idx]
+        if created_new:
+            cell.paragraphs[0].clear()
+            run = cell.paragraphs[0].add_run(header)
+            run.bold = True
+        else:
+            _set_cell_text_preserving_style(cell, header)
 
     target_rows = 1 + len(records)
     while len(table.rows) < target_rows:
@@ -240,7 +282,7 @@ def _insert_training_record_section(
     if placeholder is not None:
         img_para = placeholder.insert_paragraph_before()
         img_para.add_run().add_picture(str(loss_figure), width=Inches(6.0))
-        placeholder.text = caption_text
+        _set_paragraph_text_preserving_style(placeholder, caption_text)
         prompt_para = doc.add_paragraph(prompt_text)
         _move_after(placeholder._p, prompt_para._p)
         return
@@ -274,6 +316,7 @@ def _insert_scale_summary_and_figure(
         "coordinates from train+val scale bins), AP50, and single-image inference latency."
     )
     scale_table = doc.add_table(rows=1 + len(records), cols=6)
+    _apply_table_style(doc, scale_table, preferred_style=comparison_table.style)
     scale_headers = (
         "Run",
         "Tiny Recall (TP/GT)",
@@ -283,7 +326,10 @@ def _insert_scale_summary_and_figure(
         "Latency (ms/img)",
     )
     for col_idx, header in enumerate(scale_headers):
-        scale_table.rows[0].cells[col_idx].text = header
+        cell = scale_table.rows[0].cells[col_idx]
+        cell.paragraphs[0].clear()
+        run = cell.paragraphs[0].add_run(header)
+        run.bold = True
 
     for row_idx, rec in enumerate(records, start=1):
         cells = scale_table.rows[row_idx].cells
@@ -319,7 +365,7 @@ def _insert_qualitative_sample_section(
     featured_ids = sample_ids[:5]
     ids_label = ", ".join(featured_ids)
 
-    # Summarize per-sample counts for the first few sample IDs from test_pack_predictions.csv
+    # Summarize per-sample counts for every featured sample ID across all runs without truncation
     row_lines: list[str] = []
     for row in pred_rows:
         sid = (row.get("sample_id") or "").strip()
@@ -334,6 +380,9 @@ def _insert_qualitative_sample_section(
         row_lines.append(
             f"sample_id={sid} | run={rname} | GT={gt_c}, Pred={pred_c} (TP={tp}, FP={fp}, FN={fn})"
         )
+
+    max_summary_rows = len(featured_ids) * max(1, len(records))
+    displayed_rows = row_lines[:max_summary_rows]
 
     new_elements: list[Any] = []
     anchor_para = _find_paragraph_matching(doc, "explain your own interpretation")
@@ -357,7 +406,7 @@ def _insert_qualitative_sample_section(
     summary_p = doc.add_paragraph(
         f"Test-pack prediction reference ({pred_csv.name}; {len(sample_ids)} sample(s) total, "
         f"highlighting sample IDs [{ids_label}]): "
-        + ("; ".join(row_lines[:9]) if row_lines else f"sample IDs {ids_label}.")
+        + ("; ".join(displayed_rows) if displayed_rows else f"sample IDs {ids_label}.")
     )
     prompt_p = doc.add_paragraph(
         f"[YOUR OWN WORDS] Discuss concrete test-pack sample ID(s) [{ids_label}] from "
@@ -426,7 +475,7 @@ def build_report_docx(
 
     title_placeholder = _find_paragraph_matching(doc, "[title of your investigation]")
     if title_placeholder is not None:
-        title_placeholder.text = WORKING_TITLE
+        _set_paragraph_text_preserving_style(title_placeholder, WORKING_TITLE)
 
     comparison_table = _populate_comparison_table(doc, records)
     _insert_training_record_section(doc, records, loss_path)
