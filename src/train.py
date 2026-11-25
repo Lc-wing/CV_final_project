@@ -126,17 +126,21 @@ def _atomic_save_checkpoint(payload: dict[str, Any], path: Path) -> None:
 
 def _load_resume_checkpoint(
     ckpt_path: Path,
-    device: torch.device,
     expected_run_name: str,
 ) -> dict[str, Any]:
-    """Load and validate a ``<run_name>_last.pt`` checkpoint for resuming training."""
+    """Load and validate a ``<run_name>_last.pt`` checkpoint onto CPU for resuming training.
+
+    Always loads with ``map_location="cpu"`` so ``AdamW`` ``step`` tensors stay
+    on CPU (preventing per-step host-device syncs and device-mismatch errors on
+    CUDA) and avoiding a duplicate copy of model/optimizer state in VRAM.
+    """
     if not ckpt_path.is_file():
         raise FileNotFoundError(f"Resume requested but checkpoint not found: {ckpt_path}")
 
     try:
-        ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
     except pickle.UnpicklingError:
-        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
     if not isinstance(ckpt, dict):
         raise ValueError(
@@ -524,7 +528,6 @@ def train_run(
     if resume:
         ckpt = _load_resume_checkpoint(
             last_ckpt_path,
-            device=resolved_device,
             expected_run_name=cfg.run_name,
         )
         model.load_state_dict(ckpt["model_state_dict"])
@@ -609,22 +612,9 @@ def train_run(
                 best_val_ap50 = val_ap50
                 best_epoch = epoch
 
-            checkpoint_payload: dict[str, Any] = {
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict(),
-                "scaler_state_dict": scaler.state_dict(),
-                "epoch": epoch,
-                "global_step": global_step,
-                "best_val_ap50": float(best_val_ap50),
-                "best_epoch": best_epoch,
-                "run_name": cfg.run_name,
-                "config": serialized_cfg,
-            }
-            if improved:
-                _atomic_save_checkpoint(checkpoint_payload, best_ckpt_path)
-            _atomic_save_checkpoint(checkpoint_payload, last_ckpt_path)
-
+            # Flush the epoch CSV row BEFORE committing checkpoints so <run_name>_last.pt
+            # acts as the single atomic commit barrier for epoch completion: any crash
+            # before _last.pt is replaced will be rolled back cleanly by _prepare_csv_log.
             epoch_row = {
                 "run_name": cfg.run_name,
                 "epoch": epoch,
@@ -641,6 +631,22 @@ def train_run(
             }
             epoch_writer.writerow(epoch_row)
             epoch_fh.flush()
+
+            checkpoint_payload: dict[str, Any] = {
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "scaler_state_dict": scaler.state_dict(),
+                "epoch": epoch,
+                "global_step": global_step,
+                "best_val_ap50": float(best_val_ap50),
+                "best_epoch": best_epoch,
+                "run_name": cfg.run_name,
+                "config": serialized_cfg,
+            }
+            if improved:
+                _atomic_save_checkpoint(checkpoint_payload, best_ckpt_path)
+            _atomic_save_checkpoint(checkpoint_payload, last_ckpt_path)
 
             completed_epochs = epoch
             last_epoch_metrics = {

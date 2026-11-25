@@ -17,6 +17,8 @@ from src.eval import load_checkpoint, main as eval_main
 from src.train import (
     EPOCH_LOG_COLUMNS,
     STEP_LOG_COLUMNS,
+    _atomic_save_checkpoint,
+    _load_resume_checkpoint,
     build_lr_scheduler,
     main as train_main,
     train_run,
@@ -486,3 +488,139 @@ def test_cli_smoke_test_and_eval_interoperability(tmp_path: Path) -> None:
         ]
     )
     assert eval_rc == 0 and eval_out.exists()
+
+
+def test_load_resume_checkpoint_always_uses_cpu_map_location(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    log_dir = tmp_path / "logs"
+    ckpt_dir = tmp_path / "ckpts"
+    _make_mini_dataset(data_dir, train_count=4, val_count=2)
+
+    cfg = replace(load_config("configs/res_480.yaml"), batch_size=2, num_workers=0, warmup_steps=1)
+    monkeypatch.setattr("src.train.build_model", lambda _cfg, pretrained=True: _ToyDetector())
+
+    # Produce a real checkpoint containing AdamW optimizer state (including step tensors)
+    train_run(cfg, data_dir, log_dir, ckpt_dir, pretrained=False, epochs_override=1, device="cpu")
+    last_ckpt = ckpt_dir / "res_480_last.pt"
+
+    real_torch_load = torch.load
+    recorded_calls: list[tuple[Any, Any]] = []
+
+    def _spy_torch_load(*args: Any, **kwargs: Any) -> Any:
+        recorded_calls.append((kwargs.get("map_location"), kwargs.get("weights_only")))
+        return real_torch_load(*args, **kwargs)
+
+    monkeypatch.setattr("src.train.torch.load", _spy_torch_load)
+
+    # 1) Direct call loads via literal map_location="cpu" with weights_only=True
+    loaded = _load_resume_checkpoint(last_ckpt, expected_run_name="res_480")
+    assert recorded_calls == [("cpu", True)]
+    opt_state = loaded["optimizer_state_dict"]["state"]
+    assert opt_state and all(
+        s["step"].device.type == "cpu" for s in opt_state.values() if "step" in s
+    )
+
+    # 2) Full train_run(resume=True) call path also passes literal map_location="cpu"
+    recorded_calls.clear()
+    res2 = train_run(
+        cfg,
+        data_dir,
+        log_dir,
+        ckpt_dir,
+        pretrained=False,
+        resume=True,
+        epochs_override=2,
+        device="cpu",
+    )
+    assert res2["completed_epochs"] == 2
+    assert recorded_calls == [("cpu", True)]
+
+    # 3) Legacy checkpoint triggering pickle.UnpicklingError fallback also uses map_location="cpu"
+    legacy_ckpt = tmp_path / "legacy_last.pt"
+    legacy_payload = dict(loaded)
+    legacy_payload["config"] = cfg  # dataclass instance triggers weights_only=True fallback
+    torch.save(legacy_payload, legacy_ckpt)
+
+    recorded_calls.clear()
+    loaded_legacy = _load_resume_checkpoint(legacy_ckpt, expected_run_name="res_480")
+    assert loaded_legacy["run_name"] == "res_480"
+    assert recorded_calls == [("cpu", True), ("cpu", False)]
+
+
+def test_epoch_log_flushed_before_last_checkpoint_commit_and_crash_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    log_dir = tmp_path / "logs"
+    ckpt_dir = tmp_path / "ckpts"
+    _make_mini_dataset(data_dir, train_count=4, val_count=2)
+
+    cfg = replace(load_config("configs/res_480.yaml"), batch_size=2, num_workers=0, warmup_steps=1)
+    monkeypatch.setattr("src.train.build_model", lambda _cfg, pretrained=True: _ToyDetector())
+
+    # Complete Epoch 1 cleanly
+    train_run(cfg, data_dir, log_dir, ckpt_dir, pretrained=False, epochs_override=1, device="cpu")
+    epoch_csv = log_dir / "res_480_epoch_log.csv"
+    step_csv = log_dir / "res_480_step_log.csv"
+    last_ckpt = ckpt_dir / "res_480_last.pt"
+
+    # During Epoch 2, intercept _atomic_save_checkpoint for _last.pt:
+    # verify epoch 2 is ALREADY flushed on disk in epoch_log.csv, then simulate a disconnect crash.
+    flushed_epochs_at_commit: list[list[int]] = []
+
+    def _crashing_save(payload: dict[str, Any], path: Path) -> None:
+        with epoch_csv.open(encoding="utf-8") as fh:
+            flushed_epochs = [int(r["epoch"]) for r in csv.DictReader(fh)]
+        flushed_epochs_at_commit.append(flushed_epochs)
+        if path == last_ckpt:
+            raise OSError("simulated disconnect during _last.pt save")
+        _atomic_save_checkpoint(payload, path)
+
+    monkeypatch.setattr("src.train._atomic_save_checkpoint", _crashing_save)
+
+    with pytest.raises(OSError, match="simulated disconnect"):
+        train_run(
+            cfg,
+            data_dir,
+            log_dir,
+            ckpt_dir,
+            pretrained=False,
+            resume=True,
+            epochs_override=2,
+            device="cpu",
+        )
+
+    # Epoch 2 row was already flushed to epoch_log.csv BEFORE _last.pt save was attempted
+    assert flushed_epochs_at_commit
+    assert all(epochs == [1, 2] for epochs in flushed_epochs_at_commit)
+    # _last.pt remained committed at Epoch 1
+    assert torch.load(last_ckpt, map_location="cpu", weights_only=True)["epoch"] == 1
+
+    # Restore real save and resume: uncommitted Epoch 2 CSV rows must roll back cleanly
+    # and Epoch 2 must re-run with zero missing-epoch gaps or duplicate rows.
+    monkeypatch.setattr("src.train._atomic_save_checkpoint", _atomic_save_checkpoint)
+    res_recovered = train_run(
+        cfg,
+        data_dir,
+        log_dir,
+        ckpt_dir,
+        pretrained=False,
+        resume=True,
+        epochs_override=2,
+        device="cpu",
+    )
+    assert res_recovered["completed_epochs"] == 2
+    assert res_recovered["resumed_from_epoch"] == 1
+    assert torch.load(last_ckpt, map_location="cpu", weights_only=True)["epoch"] == 2
+
+    with epoch_csv.open(encoding="utf-8") as fh:
+        assert [int(r["epoch"]) for r in csv.DictReader(fh)] == [1, 2]
+    with step_csv.open(encoding="utf-8") as fh:
+        step_rows = list(csv.DictReader(fh))
+    assert [int(r["epoch"]) for r in step_rows] == [1, 1, 2, 2]
+    assert [int(r["global_step"]) for r in step_rows] == [1, 2, 3, 4]
+
